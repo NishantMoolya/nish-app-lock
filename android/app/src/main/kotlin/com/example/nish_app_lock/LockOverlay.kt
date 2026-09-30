@@ -43,9 +43,13 @@ object LockOverlay {
     private var enteredPin = StringBuilder()
     private var isBusy = false
 
+    /** True while only a blank dark cover is shown, waiting for the fingerprint prompt. */
+    @Volatile
+    private var coverMode = false
+
     fun isShowing(): Boolean = overlayView != null
 
-    fun show(context: Context, targetPkg: String) {
+    fun show(context: Context, targetPkg: String, autoBiometric: Boolean = true) {
         mainHandler.post {
             try {
                 if (!Settings.canDrawOverlays(context)) {
@@ -63,7 +67,11 @@ object LockOverlay {
                 isBusy = false
 
                 val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-                val view = createOverlayView(context, targetPkg)
+                // Fingerprint first: show only a blank cover (no PIN pad) so the system
+                // prompt can appear on top of BiometricActivity. PIN pad appears on failure.
+                val useBio = autoBiometric && biometricReady(context)
+                coverMode = useBio
+                val view = createOverlayView(context, targetPkg, hideContent = useBio)
                 overlayView = view
 
                 val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -89,14 +97,17 @@ object LockOverlay {
                 wm.addView(view, params)
                 Log.i(TAG, "Overlay shown for $targetPkg")
 
-                // Fingerprint is the primary unlock method. The PIN pad stays
-                // underneath as the fallback (Use PIN / cancel / lockout).
-                if (biometricReady(context)) {
+                if (useBio) {
+                    launchBiometric(context, targetPkg)
+                    // Safety net: if the prompt never appears, reveal the PIN pad.
                     mainHandler.postDelayed({
-                        if (overlayView != null && currentPkg == targetPkg) {
-                            launchBiometric(context, targetPkg)
+                        if (coverMode && overlayView != null && currentPkg == targetPkg &&
+                            !BiometricActivity.showing
+                        ) {
+                            hideImmediate(context)
+                            show(context, targetPkg, autoBiometric = false)
                         }
-                    }, 150)
+                    }, 1500)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to show overlay for $targetPkg", e)
@@ -140,6 +151,7 @@ object LockOverlay {
         val view = overlayView ?: return
         overlayView = null
         currentPkg = null
+        coverMode = false
         enteredPin.setLength(0)
         isBusy = false
 
@@ -205,7 +217,7 @@ object LockOverlay {
         hideImmediate(context)
     }
 
-    private fun createOverlayView(context: Context, targetPkg: String): View {
+    private fun createOverlayView(context: Context, targetPkg: String, hideContent: Boolean = false): View {
         val root = object : FrameLayout(context) {
             override fun dispatchKeyEvent(event: KeyEvent): Boolean {
                 if (event.keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) {
@@ -501,6 +513,8 @@ object LockOverlay {
             container.addView(fpButton)
         }
 
+        // Cover mode: dark background only, PIN pad stays hidden until fingerprint fails
+        if (hideContent) container.visibility = View.INVISIBLE
         root.addView(container)
 
         return root
