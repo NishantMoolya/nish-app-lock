@@ -9,6 +9,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.net.Uri
 import android.provider.Settings
+import androidx.fragment.app.FragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.ByteArrayOutputStream
@@ -18,6 +19,7 @@ object Prefs {
     private const val KEY_PIN_HASH = "pin_hash"
     private const val KEY_LOCKED_SET = "locked"
     private const val KEY_LOCKED_CSV = "locked_apps_csv"
+    private const val KEY_BIOMETRIC = "biometric_enabled"
 
     fun get(c: Context) = c.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
 
@@ -39,6 +41,13 @@ object Prefs {
             .putString(KEY_LOCKED_CSV, csv)
             .putStringSet(KEY_LOCKED_SET, HashSet(apps))
             .commit()
+    }
+
+    /** Fingerprint is the primary unlock method, so it defaults to ON (when hardware + enrollment exist). */
+    fun isBiometricEnabled(c: Context): Boolean = get(c).getBoolean(KEY_BIOMETRIC, true)
+
+    fun setBiometricEnabled(c: Context, enabled: Boolean) {
+        get(c).edit().putBoolean(KEY_BIOMETRIC, enabled).commit()
     }
 
     fun getPinHash(c: Context): String? = get(c).getString(KEY_PIN_HASH, null)
@@ -70,6 +79,32 @@ object Bridge {
                         val expected = Prefs.getPinHash(activity)
                         val hash = HashUtil.sha256("applock::$pin")
                         result.success(expected != null && expected == hash)
+                    }
+
+                    // ---- biometrics ----
+                    "isBiometricAvailable" -> result.success(BiometricHelper.isAvailable(activity))
+                    "isBiometricEnabled" -> result.success(Prefs.isBiometricEnabled(activity))
+                    "setBiometricEnabled" -> {
+                        Prefs.setBiometricEnabled(activity, call.argument<Boolean>("enabled") ?: false)
+                        result.success(null)
+                    }
+                    "authenticateBiometric" -> {
+                        val fa = activity as? FragmentActivity
+                        if (fa == null || !BiometricHelper.isAvailable(activity)) {
+                            result.success(false)
+                        } else {
+                            var replied = false
+                            fun reply(ok: Boolean) {
+                                if (!replied) { replied = true; result.success(ok) }
+                            }
+                            BiometricHelper.authenticate(
+                                fa,
+                                title = call.argument<String>("title") ?: "Unlock",
+                                subtitle = call.argument<String>("subtitle"),
+                                onSuccess = { reply(true) },
+                                onFailure = { _, _ -> reply(false) }
+                            )
+                        }
                     }
 
                     "getLockedApps" ->

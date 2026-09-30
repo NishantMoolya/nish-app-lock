@@ -99,6 +99,46 @@ class Native {
     } catch (_) {}
   }
 
+  // ---- Fingerprint / biometrics ----
+  static Future<bool> isBiometricAvailable() async {
+    try {
+      return await _ch.invokeMethod<bool>('isBiometricAvailable') ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<bool> isBiometricEnabled() async {
+    try {
+      return await _ch.invokeMethod<bool>('isBiometricEnabled') ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<void> setBiometricEnabled(bool enabled) async {
+    try {
+      await _ch.invokeMethod('setBiometricEnabled', {'enabled': enabled});
+    } catch (_) {}
+  }
+
+  /// Shows the system fingerprint prompt. Returns true only on success;
+  /// cancel / "Use PIN" / lockout / errors all return false.
+  static Future<bool> authenticateBiometric({
+    String title = 'Unlock',
+    String? subtitle,
+  }) async {
+    try {
+      return await _ch.invokeMethod<bool>('authenticateBiometric', {
+            'title': title,
+            'subtitle': subtitle,
+          }) ??
+          false;
+    } catch (_) {
+      return false;
+    }
+  }
+
   // Used by the lock screen
   static Future<String> getTargetName() async {
     try {

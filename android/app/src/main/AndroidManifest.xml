@@ -6,6 +6,8 @@
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
     <!-- Keypad haptic feedback -->
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Fingerprint unlock -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
@@ -48,6 +50,18 @@
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
             android:windowSoftInputMode="adjustResize" />
+
+        <!-- Transparent host for the system fingerprint prompt (shown above the PIN overlay) -->
+        <activity
+            android:name=".BiometricActivity"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:taskAffinity=""
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:showWhenLocked="true"
+            android:theme="@style/TransparentBiometricTheme"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode" />
 
         <!-- Detects which app is in the foreground -->
         <service

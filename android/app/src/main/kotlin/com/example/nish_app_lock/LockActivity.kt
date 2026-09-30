@@ -2,11 +2,11 @@ package com.example.nish_app_lock
 
 import android.os.Bundle
 import android.util.Log
-import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 
 /** Runs the Dart function `lockMain` – the PIN overlay shown on top of a locked app. */
-class LockActivity : FlutterActivity() {
+class LockActivity : FlutterFragmentActivity() {
     companion object {
         private const val TAG = "LockActivity"
     }

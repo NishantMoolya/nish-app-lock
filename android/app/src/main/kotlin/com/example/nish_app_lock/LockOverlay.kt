@@ -88,11 +88,45 @@ object LockOverlay {
 
                 wm.addView(view, params)
                 Log.i(TAG, "Overlay shown for $targetPkg")
+
+                // Fingerprint is the primary unlock method. The PIN pad stays
+                // underneath as the fallback (Use PIN / cancel / lockout).
+                if (biometricReady(context)) {
+                    mainHandler.postDelayed({
+                        if (overlayView != null && currentPkg == targetPkg) {
+                            launchBiometric(context, targetPkg)
+                        }
+                    }, 150)
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to show overlay for $targetPkg", e)
                 overlayView = null
                 currentPkg = null
             }
+        }
+    }
+
+    private fun biometricReady(context: Context): Boolean = try {
+        Prefs.isBiometricEnabled(context) && BiometricHelper.isAvailable(context)
+    } catch (e: Throwable) {
+        false
+    }
+
+    /** Opens the transparent BiometricActivity that hosts the system fingerprint prompt. */
+    fun launchBiometric(context: Context, pkg: String) {
+        if (BiometricActivity.showing) return
+        try {
+            context.startActivity(
+                Intent(context, BiometricActivity::class.java)
+                    .putExtra("package", pkg)
+                    .addFlags(
+                        Intent.FLAG_ACTIVITY_NEW_TASK or
+                                Intent.FLAG_ACTIVITY_NO_ANIMATION or
+                                Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS
+                    )
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Unable to launch biometric prompt", e)
         }
     }
 
@@ -242,7 +276,7 @@ object LockOverlay {
 
         // Subtitle
         val subtitleView = TextView(context).apply {
-            text = "App is locked • Enter PIN"
+            text = if (biometricReady(context)) "App is locked • Use fingerprint or PIN" else "App is locked • Enter PIN"
             textSize = 14f
             setTextColor(Color.parseColor("#94A3B8")) // Slate 400
             gravity = Gravity.CENTER
@@ -443,6 +477,30 @@ object LockOverlay {
         bottomRow.addView(createKey("⌫", isAction = true) { onBackspace() })
 
         container.addView(bottomRow)
+
+        // Retry button for the fingerprint prompt
+        if (biometricReady(context)) {
+            val fpButton = TextView(context).apply {
+                text = "Use fingerprint"
+                textSize = 15f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(Color.parseColor("#818CF8")) // Indigo 400
+                gravity = Gravity.CENTER
+                setPadding(dp(context, 22), dp(context, 10), dp(context, 22), dp(context, 10))
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { topMargin = dp(context, 12) }
+                background = GradientDrawable().apply {
+                    cornerRadius = dp(context, 24).toFloat()
+                    setStroke(dp(context, 1), Color.parseColor("#4F46E5"))
+                }
+                isClickable = true
+                setOnClickListener { launchBiometric(context, targetPkg) }
+            }
+            container.addView(fpButton)
+        }
+
         root.addView(container)
 
         return root

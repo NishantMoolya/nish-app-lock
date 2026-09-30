@@ -76,9 +76,42 @@ class _SetupPinScreenState extends State<SetupPinScreen> {
 // ==========================================
 // 2. UNLOCK APP SCREEN (To access settings)
 // ==========================================
-class UnlockAppScreen extends StatelessWidget {
+class UnlockAppScreen extends StatefulWidget {
   final VoidCallback onUnlocked;
   const UnlockAppScreen({super.key, required this.onUnlocked});
+
+  @override
+  State<UnlockAppScreen> createState() => _UnlockAppScreenState();
+}
+
+class _UnlockAppScreenState extends State<UnlockAppScreen> {
+  bool _bioReady = false;
+  bool _prompting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _initBiometric();
+  }
+
+  Future<void> _initBiometric() async {
+    final ready =
+        await Native.isBiometricAvailable() && await Native.isBiometricEnabled();
+    if (!mounted) return;
+    setState(() => _bioReady = ready);
+    if (ready) _tryBiometric(); // fingerprint first, PIN pad is the fallback
+  }
+
+  Future<void> _tryBiometric() async {
+    if (_prompting) return;
+    _prompting = true;
+    final ok = await Native.authenticateBiometric(
+      title: 'Unlock Nish App Lock',
+      subtitle: 'Use your fingerprint to access settings',
+    );
+    _prompting = false;
+    if (ok && mounted) widget.onUnlocked();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -86,29 +119,46 @@ class UnlockAppScreen extends StatelessWidget {
 
     return Scaffold(
       body: SafeArea(
-        child: PinPad(
-          headerIcon: Container(
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: cs.primaryContainer.withValues(alpha: 0.6),
+        child: Column(
+          children: [
+            Expanded(
+              child: PinPad(
+                headerIcon: Container(
+                  padding: const EdgeInsets.all(18),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: cs.primaryContainer.withValues(alpha: 0.6),
+                  ),
+                  child: Icon(
+                    _bioReady ? Icons.fingerprint : Icons.shield_outlined,
+                    size: 44,
+                    color: cs.primary,
+                  ),
+                ),
+                title: 'Nish App Lock',
+                subtitle: _bioReady
+                    ? 'Use your fingerprint or enter your PIN'
+                    : 'Enter your 4-digit PIN to access settings',
+                onSubmit: (pin) async {
+                  final valid = await Native.verifyPin(pin);
+                  if (valid) {
+                    widget.onUnlocked();
+                    return null;
+                  }
+                  return 'Incorrect PIN. Try again.';
+                },
+              ),
             ),
-            child: Icon(
-              Icons.shield_outlined,
-              size: 44,
-              color: cs.primary,
-            ),
-          ),
-          title: 'Nish App Lock',
-          subtitle: 'Enter your 4-digit PIN to access settings',
-          onSubmit: (pin) async {
-            final valid = await Native.verifyPin(pin);
-            if (valid) {
-              onUnlocked();
-              return null;
-            }
-            return 'Incorrect PIN. Try again.';
-          },
+            if (_bioReady)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: TextButton.icon(
+                  onPressed: _tryBiometric,
+                  icon: const Icon(Icons.fingerprint),
+                  label: const Text('Use fingerprint'),
+                ),
+              ),
+          ],
         ),
       ),
     );
@@ -131,6 +181,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _loading = true;
   bool _accEnabled = false;
   bool _overlayEnabled = false;
+  bool _bioAvailable = false;
+  bool _bioEnabled = false;
   String _searchQuery = '';
   String _filter = 'all'; // 'all', 'locked', 'unlocked'
   bool _showSearch = false;
@@ -172,12 +224,47 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _checkPerms() async {
     final a = await Native.isAccessibilityEnabled();
     final o = await Native.canDrawOverlays();
+    final bAvail = await Native.isBiometricAvailable();
+    final bOn = await Native.isBiometricEnabled();
     if (mounted) {
       setState(() {
         _accEnabled = a;
         _overlayEnabled = o;
+        _bioAvailable = bAvail;
+        _bioEnabled = bOn;
       });
     }
+  }
+
+  Future<void> _toggleBiometric() async {
+    final messenger = ScaffoldMessenger.of(context);
+
+    if (!_bioAvailable) {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text(
+            'No fingerprint available. Enroll a fingerprint in your device settings first.',
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    if (_bioEnabled) {
+      await Native.setBiometricEnabled(false);
+      if (mounted) setState(() => _bioEnabled = false);
+      return;
+    }
+
+    // Enabling requires a successful fingerprint scan.
+    final ok = await Native.authenticateBiometric(
+      title: 'Enable fingerprint unlock',
+      subtitle: 'Confirm with your fingerprint',
+    );
+    if (!ok) return;
+    await Native.setBiometricEnabled(true);
+    if (mounted) setState(() => _bioEnabled = true);
   }
 
   Future<void> _toggleLock(String pkg, bool enable) async {
@@ -258,6 +345,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             onSelected: (val) {
               if (val == 'pin') {
                 _openChangePinDialog();
+              } else if (val == 'bio') {
+                _toggleBiometric();
               } else if (val == 'refresh') {
                 setState(() => _loading = true);
                 _load();
@@ -273,6 +362,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     Text('Change PIN'),
                   ],
                 ),
+              ),
+              CheckedPopupMenuItem<String>(
+                value: 'bio',
+                checked: _bioAvailable && _bioEnabled,
+                child: const Text('Fingerprint unlock'),
               ),
               const PopupMenuItem(
                 value: 'refresh',
@@ -612,6 +706,8 @@ class LockScreen extends StatefulWidget {
 
 class _LockScreenState extends State<LockScreen> {
   String _name = '';
+  bool _bioReady = false;
+  bool _prompting = false;
 
   @override
   void initState() {
@@ -619,6 +715,26 @@ class _LockScreenState extends State<LockScreen> {
     Native.getTargetName().then((n) {
       if (mounted) setState(() => _name = n);
     });
+    _initBiometric();
+  }
+
+  Future<void> _initBiometric() async {
+    final ready =
+        await Native.isBiometricAvailable() && await Native.isBiometricEnabled();
+    if (!mounted) return;
+    setState(() => _bioReady = ready);
+    if (ready) _tryBiometric(); // fingerprint first, PIN pad is the fallback
+  }
+
+  Future<void> _tryBiometric() async {
+    if (_prompting) return;
+    _prompting = true;
+    final ok = await Native.authenticateBiometric(
+      title: _name.isNotEmpty ? 'Unlock $_name' : 'Unlock app',
+      subtitle: 'Use your fingerprint to continue',
+    );
+    _prompting = false;
+    if (ok) await Native.unlocked();
   }
 
   @override
@@ -632,24 +748,41 @@ class _LockScreenState extends State<LockScreen> {
       },
       child: Scaffold(
         body: SafeArea(
-          child: PinPad(
-            headerIcon: const Icon(
-              Icons.lock_rounded,
-              size: 52,
-              color: Colors.indigoAccent,
-            ),
-            title: _name.isNotEmpty ? _name : 'App Locked',
-            subtitle: 'Enter 4-digit PIN to continue',
-            onCancel: Native.goHome,
-            cancelLabel: 'Exit',
-            onSubmit: (pin) async {
-              final valid = await Native.verifyPin(pin);
-              if (valid) {
-                await Native.unlocked();
-                return null;
-              }
-              return 'Wrong PIN';
-            },
+          child: Column(
+            children: [
+              Expanded(
+                child: PinPad(
+                  headerIcon: const Icon(
+                    Icons.lock_rounded,
+                    size: 52,
+                    color: Colors.indigoAccent,
+                  ),
+                  title: _name.isNotEmpty ? _name : 'App Locked',
+                  subtitle: _bioReady
+                      ? 'Use fingerprint or enter PIN to continue'
+                      : 'Enter 4-digit PIN to continue',
+                  onCancel: Native.goHome,
+                  cancelLabel: 'Exit',
+                  onSubmit: (pin) async {
+                    final valid = await Native.verifyPin(pin);
+                    if (valid) {
+                      await Native.unlocked();
+                      return null;
+                    }
+                    return 'Wrong PIN';
+                  },
+                ),
+              ),
+              if (_bioReady)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 16),
+                  child: TextButton.icon(
+                    onPressed: _tryBiometric,
+                    icon: const Icon(Icons.fingerprint),
+                    label: const Text('Use fingerprint'),
+                  ),
+                ),
+            ],
           ),
         ),
       ),
